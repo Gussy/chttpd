@@ -72,6 +72,11 @@ handle_request(MochiReq) ->
         MochiReq:get(method),
         RawUri
     ]),
+    
+    case redis_client() of
+        {ok, _} ->
+            eredis:q(eredis_driver, ["INCR", "req"])
+    end,
 
     Method1 =
     case MochiReq:get(method) of
@@ -138,6 +143,20 @@ handle_request(MochiReq) ->
     couch_stats_collector:record({couchdb, request_time}, RequestTime),
     couch_stats_collector:increment({httpd, requests}),
     {ok, Resp}.
+
+redis_client() ->
+    case whereis(eredis_driver) of
+        undefined ->
+            case eredis:start_link() of
+                {ok, RedisClient} ->
+                    register(eredis_driver, RedisClient),
+                    {ok, RedisClient};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        Pid ->
+            {ok, Pid}
+    end.
 
 %% HACK: replication currently handles two forms of input, #db{} style
 %% and #http_db style. We need a third that makes use of fabric. #db{}
