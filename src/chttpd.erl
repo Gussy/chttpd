@@ -73,11 +73,6 @@ handle_request(MochiReq) ->
         RawUri
     ]),
     
-    case redis_client() of
-        {ok, _} ->
-            eredis:q(eredis_driver, ["INCR", "req"])
-    end,
-
     Method1 =
     case MochiReq:get(method) of
         % already an atom
@@ -138,6 +133,14 @@ handle_request(MochiReq) ->
     RequestTime = timer:now_diff(now(), Begin)/1000,
     Code = Resp:get(code),
     Host = MochiReq:get_header_value("Host"),
+    
+    case redis_client() of
+        {ok, _} ->
+            eredis:q(eredis_driver, ["INCR", lists:concat(["totalreqs:", atom_to_list(Method1)])]),
+            eredis:q(eredis_driver, ["LPUSH", "reqtime", round(RequestTime)]),
+            eredis:q(eredis_driver, ["LTRIM", "reqtime", 0, 1000])
+    end,
+
     ?LOG_INFO("~s ~s ~s ~s ~B ~B", [Peer, Host,
         atom_to_list(Method1), RawUri, Code, round(RequestTime)]),
     couch_stats_collector:record({couchdb, request_time}, RequestTime),
