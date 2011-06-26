@@ -25,6 +25,8 @@
     send_method_not_allowed/2, send_error/2, send_error/4, send_redirect/2,
     send_chunked_error/2, send_json/2,send_json/3,send_json/4]).
 
+-define(SUBDOMAIN_REGEX, "^(?:([^\.]+)\.)?bitscatter\.com$").
+
 start_link() ->
     Options = [
         {loop, fun ?MODULE:handle_request/1},
@@ -63,6 +65,23 @@ handle_request(MochiReq) ->
     % for the path, use the raw path with the query string and fragment
     % removed, but URL quoting left intact
     RawUri = MochiReq:get(raw_path),
+
+    % Remove the port from the hostname
+    Host = MochiReq:get_header_value("Host"),
+    [StrippedHost, _] = re:split(Host, ":", [{return,list}]),
+    % Find the subdomain of the hostname
+    case re:run(StrippedHost, ?SUBDOMAIN_REGEX, [{capture, all, list}]) of
+        {match, [Hostmatch, Subdomain]} ->
+            ?LOG_INFO("~s ~s", [Hostmatch, Subdomain]);
+        {match, [_]} ->
+            ?LOG_ERROR("Invalid subdomain supplied: ~s", [StrippedHost]);
+            %should we to fail here?
+        nomatch ->
+            ?LOG_ERROR("Invalid hostname: ~s", [StrippedHost])
+            %should we to fail here?
+    end,
+    
+
     {"/" ++ Path, _, _} = mochiweb_util:urlsplit_path(RawUri),
     {HandlerKey, _, _} = mochiweb_util:partition(Path, "/"),
 
@@ -132,7 +151,7 @@ handle_request(MochiReq) ->
 
     RequestTime = timer:now_diff(now(), Begin)/1000,
     Code = Resp:get(code),
-    Host = MochiReq:get_header_value("Host"),
+    %Host = MochiReq:get_header_value("Host"),
     
     case redis_client() of
         {ok, _} ->
