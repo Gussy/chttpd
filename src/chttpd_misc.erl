@@ -23,6 +23,7 @@
 
 -import(chttpd,
     [send_json/2,send_json/3,send_json/4,send_method_not_allowed/2,
+    send_error/2,send_redirect/2,
     start_json_response/2,send_chunk/2,end_json_response/1,
     start_chunked_response/3, send_error/4]).
 
@@ -75,7 +76,7 @@ handle_utils_dir_req(#httpd{method='GET'}=Req, DocumentRoot) ->
     {_ActionKey, "", _RelativePath} ->
         % GET /_utils
         RedirectPath = chttpd:path(Req) ++ "/",
-        chttpd:send_redirect(Req, RedirectPath)
+        send_redirect(Req, RedirectPath)
     end;
 handle_utils_dir_req(Req, _) ->
     send_method_not_allowed(Req, "GET,HEAD").
@@ -87,8 +88,18 @@ handle_sleep_req(#httpd{method='GET'}=Req) ->
 handle_sleep_req(Req) ->
     send_method_not_allowed(Req, "GET,HEAD").
 
-handle_all_dbs_req(#httpd{method='GET'}=Req) ->
+handle_all_dbs_req(#httpd{method='GET',path_parts=[DbName|_]}=Req) ->
     ShardDbName = couch_config:get("mem3", "shard_db", "dbs"),
+
+    User =
+    case re:split(DbName, "/", [{return,list}]) of
+        [Username, _] ->
+            Username;
+        [_] ->
+            ""
+    end,
+    ?LOG_INFO("Attempting to get databases for user: ~s", [User]),
+
     %% shard_db is not sharded but mem3:shards treats it as an edge case
     %% so it can be pushed thru fabric
     {ok, Info} = fabric:get_db_info(ShardDbName),

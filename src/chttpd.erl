@@ -99,11 +99,12 @@ handle_request(MochiReq) ->
     User =
     case re:run(StrippedHost, ?SUBDOMAIN_REGEX, [{capture, all, list}]) of
         {match, [_, Subdomain]} ->
-            Subdomain;
+            Subdomain ++ "%2f";
         {match, [_]} ->
-            ?LOG_ERROR("Invalid subdomain supplied: ~s", [StrippedHost]),
-            send_error(#httpd{mochi_req=MochiReq}, database_does_not_exist),
-            exit(normal);
+            %?LOG_ERROR("Invalid subdomain supplied: ~s", [StrippedHost]),
+            %send_error(#httpd{mochi_req=MochiReq}, database_does_not_exist),
+            %exit(normal);
+            "";
         nomatch ->
             ?LOG_ERROR("Invalid hostname: ~s", [StrippedHost]),
             send_error(#httpd{mochi_req=MochiReq}, database_does_not_exist),
@@ -114,7 +115,7 @@ handle_request(MochiReq) ->
         mochi_req = MochiReq,
         method = Method,
         path_parts = [list_to_binary(chttpd:unquote(Part))
-                || Part <- string:tokens(User ++ "%2f" ++ Path, "/")],
+                || Part <- string:tokens(User ++ Path, "/")],
         db_url_handlers = db_url_handlers(),
         design_url_handlers = design_url_handlers()
     },
