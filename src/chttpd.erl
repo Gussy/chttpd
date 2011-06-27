@@ -65,23 +65,6 @@ handle_request(MochiReq) ->
     % for the path, use the raw path with the query string and fragment
     % removed, but URL quoting left intact
     RawUri = MochiReq:get(raw_path),
-
-    % Remove the port from the hostname
-    Host = MochiReq:get_header_value("Host"),
-    [StrippedHost, _] = re:split(Host, ":", [{return,list}]),
-    % Find the subdomain of the hostname
-    case re:run(StrippedHost, ?SUBDOMAIN_REGEX, [{capture, all, list}]) of
-        {match, [Hostmatch, Subdomain]} ->
-            ?LOG_INFO("~s ~s", [Hostmatch, Subdomain]);
-        {match, [_]} ->
-            ?LOG_ERROR("Invalid subdomain supplied: ~s", [StrippedHost]);
-            %should we to fail here?
-        nomatch ->
-            ?LOG_ERROR("Invalid hostname: ~s", [StrippedHost])
-            %should we to fail here?
-    end,
-    
-
     {"/" ++ Path, _, _} = mochiweb_util:urlsplit_path(RawUri),
     {HandlerKey, _, _} = mochiweb_util:partition(Path, "/"),
 
@@ -108,11 +91,30 @@ handle_request(MochiReq) ->
         Other -> Other
     end,
 
+    % Remove the port from the hostname
+    Host = MochiReq:get_header_value("Host"),
+    [StrippedHost, _] = re:split(Host, ":", [{return,list}]),
+
+    % Extract the user (subdomain) from the hostname
+    User =
+    case re:run(StrippedHost, ?SUBDOMAIN_REGEX, [{capture, all, list}]) of
+        {match, [_, Subdomain]} ->
+            Subdomain;
+        {match, [_]} ->
+            ?LOG_ERROR("Invalid subdomain supplied: ~s", [StrippedHost]),
+            send_error(#httpd{mochi_req=MochiReq}, database_does_not_exist),
+            exit(normal);
+        nomatch ->
+            ?LOG_ERROR("Invalid hostname: ~s", [StrippedHost]),
+            send_error(#httpd{mochi_req=MochiReq}, database_does_not_exist),
+            exit(normal)
+    end,
+
     HttpReq = #httpd{
         mochi_req = MochiReq,
         method = Method,
         path_parts = [list_to_binary(chttpd:unquote(Part))
-                || Part <- string:tokens(Path, "/")],
+                || Part <- string:tokens(User ++ "%2f" ++ Path, "/")],
         db_url_handlers = db_url_handlers(),
         design_url_handlers = design_url_handlers()
     },
@@ -151,7 +153,7 @@ handle_request(MochiReq) ->
 
     RequestTime = timer:now_diff(now(), Begin)/1000,
     Code = Resp:get(code),
-    %Host = MochiReq:get_header_value("Host"),
+    Host = MochiReq:get_header_value("Host"),
     
     case redis_client() of
         {ok, _} ->
