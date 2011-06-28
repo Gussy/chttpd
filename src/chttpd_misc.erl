@@ -90,16 +90,11 @@ handle_sleep_req(Req) ->
 
 handle_all_dbs_req(#httpd{method='GET',path_parts=[DbName|_]}=Req) ->
     ShardDbName = couch_config:get("mem3", "shard_db", "dbs"),
-
     User =
     case re:split(DbName, "/", [{return,list}]) of
-        [Username, _] ->
-            Username;
-        [_] ->
-            ""
+        [Username, _] -> Username;
+        [_] -> ""
     end,
-    ?LOG_INFO("Attempting to get databases for user: ~s", [User]),
-
     %% shard_db is not sharded but mem3:shards treats it as an edge case
     %% so it can be pushed thru fabric
     {ok, Info} = fabric:get_db_info(ShardDbName),
@@ -107,20 +102,34 @@ handle_all_dbs_req(#httpd{method='GET',path_parts=[DbName|_]}=Req) ->
     chttpd:etag_respond(Req, Etag, fun() ->
         {ok, Resp} = chttpd:start_json_response(Req, 200, [{"Etag",Etag}]),
         fabric:all_docs(ShardDbName, fun all_dbs_callback/2,
-            {nil, Resp}, #view_query_args{})
+            {User, Resp}, #view_query_args{})
     end);
 handle_all_dbs_req(Req) ->
     send_method_not_allowed(Req, "GET,HEAD").
 
-all_dbs_callback({total_and_offset, _Total, _Offset}, {_, Resp}) ->
+all_dbs_callback({total_and_offset, _Total, _Offset}, {Acc, Resp}) ->
     send_chunk(Resp, "["),
-    {ok, {"", Resp}};
-all_dbs_callback({row, {Row}}, {Prepend, Resp}) ->
+    {ok, {{"", Acc}, Resp}};
+all_dbs_callback({row, {Row}}, {Recurse, Resp}) ->
+    {Prepend, Acc} = Recurse,
     case couch_util:get_value(id, Row) of <<"_design", _/binary>> ->
-        {ok, {Prepend, Resp}};
+        {ok, {{Prepend, Acc}, Resp}};
     DbName ->
-        send_chunk(Resp, [Prepend, ?JSON_ENCODE(DbName)]),
-        {ok, {",", Resp}}
+        case Acc of
+            % Return all dbs when no user is supplied (administraction case)
+            "" ->
+                    send_chunk(Resp, [Prepend, ?JSON_ENCODE(DbName)]),
+                    {ok, {{",", Acc}, Resp}};
+            % Return only dbs which belong to that user
+            _ ->
+                case re:run(DbName, "^"++Acc++"/([a-z].*)$", [{capture, all, binary}]) of
+                    {match, [_, Name]} ->
+                        send_chunk(Resp, [Prepend, ?JSON_ENCODE(Name)]),
+                        {ok, {{",", Acc}, Resp}};
+                    nomatch ->
+                        {ok, {{"", Acc}, Resp}}
+                end
+        end
     end;
 all_dbs_callback(complete, {_, Resp}) ->
     send_chunk(Resp, "]"),
